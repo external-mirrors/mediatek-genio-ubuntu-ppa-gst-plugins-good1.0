@@ -301,6 +301,29 @@ done:
   return ret;
 }
 
+static void
+gst_v4l2_video_enc_set_driver_caps (GstVideoEncoder * encoder,
+    GstVideoCodecState * state)
+{
+  GstV4l2VideoEnc *self = GST_V4L2_VIDEO_ENC (encoder);
+  GstV4l2Object *v4l2object = self->v4l2output;
+  struct v4l2_control control = { 0, };
+
+  state->caps = gst_caps_make_writable (state->caps);
+
+  /* check prepend header */
+  control.id = V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR;
+  if (v4l2object->ioctl (v4l2object->video_fd, VIDIOC_G_CTRL, &control) < 0) {
+    GST_DEBUG_OBJECT (v4l2object->dbg_obj,
+        "Get prepend_hdr fail, set to default 0.");
+    control.value = 0;
+  } else {
+    GST_DEBUG_OBJECT (v4l2object->dbg_obj, "prepend_hdr = %d", control.value);
+  }
+  gst_caps_set_simple (state->caps, "prepend_hdr", G_TYPE_INT, control.value,
+      NULL);
+}
+
 static gboolean
 gst_v4l2_video_enc_set_format (GstVideoEncoder * encoder,
     GstVideoCodecState * state)
@@ -328,6 +351,9 @@ gst_v4l2_video_enc_set_format (GstVideoEncoder * encoder,
     gst_video_codec_state_unref (self->input_state);
     self->input_state = NULL;
   }
+
+  /* query & set caps from driver */
+  gst_v4l2_video_enc_set_driver_caps (encoder, state);
 
   outcaps = gst_pad_get_pad_template_caps (encoder->srcpad);
   outcaps = gst_caps_make_writable (outcaps);
