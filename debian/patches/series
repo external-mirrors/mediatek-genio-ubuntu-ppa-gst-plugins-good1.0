@@ -1,0 +1,4 @@
+Skip-failing-tests.patch
+import-camerabin
+import-jpegformat
+add-pkgconfig-file
