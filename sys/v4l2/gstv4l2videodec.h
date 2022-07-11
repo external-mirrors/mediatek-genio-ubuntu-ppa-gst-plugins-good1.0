@@ -1,3 +1,5 @@
+//SPDX-License-Identifier: LGPL-2.1
+
 /*
  * Copyright (C) 2014 Collabora Ltd.
  *     Author: Nicolas Dufresne <nicolas.dufresne@collabora.co.uk>
@@ -62,6 +64,11 @@ struct _GstV4l2VideoDec
   GstVideoCodecState *input_state;
   gboolean active;
   GstFlowReturn output_flow;
+
+  gboolean res_changed_state;
+  gboolean received_caps_event;
+
+  gboolean received_flushing_event;
 };
 
 struct _GstV4l2VideoDecClass

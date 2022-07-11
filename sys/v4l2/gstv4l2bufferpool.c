@@ -29,10 +29,15 @@
 #ifndef _GNU_SOURCE
 # define _GNU_SOURCE            /* O_CLOEXEC */
 #endif
+#include <unistd.h>
 #include <fcntl.h>
-
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdint.h>
 #include <sys/mman.h>
 #include <string.h>
+#include <errno.h>
+#include <poll.h>
 #include <unistd.h>
 
 #include "gst/video/video.h"
@@ -1166,7 +1171,7 @@ again:
 
   if (gst_poll_fd_has_error (pool->poll, &pool->pollfd))
     goto select_error;
-
+#if 0
   /* PRI is used to signal that events are available */
   if (gst_poll_fd_has_pri (pool->poll, &pool->pollfd)) {
     struct v4l2_event event = { 0, };
@@ -1187,7 +1192,7 @@ again:
 
     return GST_V4L2_FLOW_RESOLUTION_CHANGE;
   }
-
+#endif
   if (ret == 0)
     goto no_buffers;
 
@@ -1210,13 +1215,22 @@ no_buffers:
   {
     return GST_V4L2_FLOW_LAST_BUFFER;
   }
+#if 0
 dqevent_failed:
   {
     GST_ELEMENT_ERROR (pool->obj->element, RESOURCE, READ, (NULL),
         ("dqevent error: %s (%d)", g_strerror (errno), errno));
     return GST_FLOW_ERROR;
   }
+#endif
 }
+
+GstFlowReturn
+gst_v4l2_buffer_pool_poll_event (GstV4l2BufferPool * pool, gboolean wait)
+{
+  return gst_v4l2_buffer_pool_poll (pool, wait);
+}
+
 
 static GstFlowReturn
 gst_v4l2_buffer_pool_qbuf (GstV4l2BufferPool * pool, GstBuffer * buf,
@@ -1251,6 +1265,7 @@ gst_v4l2_buffer_pool_qbuf (GstV4l2BufferPool * pool, GstBuffer * buf,
   if (frame_number) {
     group->buffer.timestamp.tv_sec = *frame_number;
     group->buffer.timestamp.tv_usec = 0;
+    GST_LOG_OBJECT (pool, "frame number = %d", *frame_number);
   } else {
     if (GST_BUFFER_TIMESTAMP_IS_VALID (buf)) {
       GstClockTime timestamp = GST_BUFFER_TIMESTAMP (buf);
@@ -1328,12 +1343,12 @@ gst_v4l2_buffer_pool_dqbuf (GstV4l2BufferPool * pool, GstBuffer ** buffer,
     GST_LOG_OBJECT (pool, "nothing to dequeue");
     goto done;
   }
-
+#if 0
   if (res == GST_V4L2_FLOW_RESOLUTION_CHANGE) {
     GST_INFO_OBJECT (pool, "Resolution change detected.");
     goto done;
   }
-
+#endif
   GST_LOG_OBJECT (pool, "dequeueing a buffer");
 
   res = gst_v4l2_allocator_dqbuf (pool->vallocator, &group);
@@ -1728,9 +1743,11 @@ gst_v4l2_buffer_pool_release_buffer (GstBufferPool * bpool, GstBuffer * buffer)
     gint old_buffer_state =
         g_atomic_int_and (&pool->buffer_state[group->buffer.index],
         ~BUFFER_STATE_OUTSTANDING);
+
     queued = (old_buffer_state & BUFFER_STATE_QUEUED) != 0;
-    GST_LOG_OBJECT (pool, "mark buffer %u not outstanding",
-        group->buffer.index);
+
+    GST_LOG_OBJECT (pool, "mark buffer %p(index:%u,state:%d) current-state to %d",
+        buffer, group->buffer.index, old_buffer_state, pool->buffer_state[group->buffer.index]);
   }
 
   gst_v4l2_buffer_pool_complete_release_buffer (bpool, buffer, queued);
@@ -1833,6 +1850,8 @@ gst_v4l2_buffer_pool_new (GstV4l2Object * obj, GstCaps * caps)
   if (fd < 0)
     goto dup_failed;
 
+  GST_DEBUG_OBJECT (pool, "dup video fd:%d into fd:%d", obj->video_fd, fd);
+
   /* setting a significant unique name */
   parent_name = gst_object_get_name (GST_OBJECT (obj->element));
   name = g_strdup_printf ("%s:pool%u:%s",
@@ -1850,8 +1869,10 @@ gst_v4l2_buffer_pool_new (GstV4l2Object * obj, GstCaps * caps)
   gst_poll_add_fd (pool->poll, &pool->pollfd);
   if (V4L2_TYPE_IS_OUTPUT (obj->type))
     gst_poll_fd_ctl_write (pool->poll, &pool->pollfd, TRUE);
-  else
+  else {
     gst_poll_fd_ctl_read (pool->poll, &pool->pollfd, TRUE);
+    gst_poll_fd_ctl_pri (pool->poll,&pool->pollfd, TRUE);
+  }
 
   pool->video_fd = fd;
   pool->obj = obj;
@@ -2347,4 +2368,30 @@ gst_v4l2_buffer_pool_enable_resolution_change (GstV4l2BufferPool * pool)
 
   if (gst_v4l2_subscribe_event (pool->obj, V4L2_EVENT_SOURCE_CHANGE, input_id))
     gst_poll_fd_ctl_pri (pool->poll, &pool->pollfd, TRUE);
+}
+
+void
+gst_v4l2_buffer_pool_streamoff_res_change (GstBufferPool *bpool)
+{
+  GstV4l2BufferPool *pool = GST_V4L2_BUFFER_POOL (bpool);
+  GstV4l2Object *obj = pool->obj;
+
+  if (!pool->streaming)
+    return;
+
+  switch (obj->mode) {
+    case GST_V4L2_IO_MMAP:
+    case GST_V4L2_IO_USERPTR:
+    case GST_V4L2_IO_DMABUF:
+    case GST_V4L2_IO_DMABUF_IMPORT:
+
+      if (obj->ioctl (pool->video_fd, VIDIOC_STREAMOFF, &obj->type) < 0)
+        GST_WARNING_OBJECT (pool, "STREAMOFF failed with errno %d (%s)",
+            errno, g_strerror (errno));
+
+      GST_DEBUG_OBJECT (pool, "Stopped streaming");
+      break;
+    default:
+      break;
+  }
 }

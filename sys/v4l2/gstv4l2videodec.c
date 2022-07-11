@@ -1,3 +1,5 @@
+//SPDX-License-Identifier: LGPL-2.1
+
 /*
  * Copyright (C) 2014 Collabora Ltd.
  *     Author: Nicolas Dufresne <nicolas.dufresne@collabora.com>
@@ -42,6 +44,9 @@
 #include <string.h>
 #include <gst/gst-i18n-plugin.h>
 
+#include <sys/poll.h>
+#include <poll.h>
+
 GST_DEBUG_CATEGORY_STATIC (gst_v4l2_video_dec_debug);
 #define GST_CAT_DEFAULT gst_v4l2_video_dec_debug
 
@@ -66,6 +71,42 @@ G_DEFINE_ABSTRACT_TYPE (GstV4l2VideoDec, gst_v4l2_video_dec,
     GST_TYPE_VIDEO_DECODER);
 
 static GstFlowReturn gst_v4l2_video_dec_finish (GstVideoDecoder * decoder);
+
+static gint
+gst_v4l2_video_dec_check_empty_buffer(GstV4l2Object * v4l2object, gint timeout)
+{
+  struct pollfd pfd;
+  gshort wait_event = V4L2_TYPE_IS_OUTPUT (v4l2object->type) ? POLLOUT : POLLIN;
+  gint ret = 0;
+  pfd.fd = v4l2object->video_fd;
+  pfd.events = POLLERR;
+  pfd.events |= wait_event;
+
+  GST_LOG ("before poll");
+  ret = poll (&pfd, 1, timeout);
+  GST_LOG ("after poll, pfd.revents=%d", pfd.revents);
+
+  if (ret == -1) {
+    GST_LOG ("poll fail");
+    return GST_V4L2_RET_FAIL;
+  }
+
+  if (pfd.revents & POLLERR) {
+    GST_LOG ("poll ERROR");
+    return GST_V4L2_RET_FAIL;
+  }
+
+  if ((pfd.revents & wait_event) == wait_event) {
+    GST_LOG ("poll has data to read");
+    return GST_V4L2_RET_OK;
+  }
+  else {
+    GST_LOG ("poll has no data to read");
+    return GST_V4L2_RET_NO_FREE_BUF;
+  }
+}
+
+
 
 static void
 gst_v4l2_video_dec_set_property (GObject * object,
@@ -186,6 +227,7 @@ gst_v4l2_video_dec_start (GstVideoDecoder * decoder)
   gst_v4l2_object_unlock (self->v4l2output);
   g_atomic_int_set (&self->active, TRUE);
   self->output_flow = GST_FLOW_OK;
+  self->received_caps_event = FALSE;
 
   return TRUE;
 }
@@ -471,9 +513,9 @@ gst_v4l2_video_dec_finish (GstVideoDecoder * decoder)
 
   GST_DEBUG_OBJECT (decoder, "Done draining buffers");
 
-  /* Draining of the capture buffer has completed. 
+  /* Draining of the capture buffer has completed.
    * If any pending frames remain at this point there is a decoder error.
-   * This has been observed as a driver bug, where eos is sent too early.   
+   * This has been observed as a driver bug, where eos is sent too early.
    * These frames will never be rendered, so drop them now with a warning */
 
   pending_frames = gst_video_decoder_get_frames (decoder);
@@ -529,6 +571,94 @@ check_system_frame_number_too_old (guint32 current, guint32 old)
 }
 
 static void
+gst_v4l2_update_caps (GstVideoDecoder * decoder, GstVideoFormat format, guint width, guint height, guint crop_width, guint crop_height)
+{
+  GstCaps *prevcaps = NULL;
+  GstCaps *updatecaps = NULL;
+  GstStructure *s = NULL;
+
+  prevcaps = gst_pad_get_current_caps (decoder->srcpad);
+
+  if (prevcaps) {
+    GST_DEBUG_OBJECT (decoder, "before update caps, srcpad caps: %" GST_PTR_FORMAT, prevcaps);
+    gboolean ret = TRUE;
+    gboolean res_changed = FALSE;
+    gint disp_width = 0;
+    gint disp_height = 0;
+    gint pre_width = 0;
+    gint pre_height = 0;
+    gchar* pre_format = NULL;
+    gchar* cur_format = NULL;
+
+    s = gst_caps_get_structure (prevcaps, 0);
+    if (s && gst_structure_has_field (s, "display_width"))
+      gst_structure_get_int (s, "display_width", &disp_width);
+
+    if (s && gst_structure_has_field (s, "display_height"))
+      gst_structure_get_int (s, "display_height", &disp_height);
+
+    if (s && gst_structure_has_field (s, "width"))
+      gst_structure_get_int (s, "width", &pre_width);
+
+    if (s && gst_structure_has_field (s, "height"))
+      gst_structure_get_int (s, "height", &pre_height);
+
+    if (s && gst_structure_has_field (s, "format"))
+      pre_format = gst_structure_get_string (s, "format");
+
+    GST_INFO("display_width=%d,display_height=%d,crop.width=%d,crop.height=%d,prewidth=%d,preheight=%d,width=%d,height=%d",
+      disp_width, disp_height, crop_width, crop_height, pre_width, pre_height, width, height);
+
+    cur_format = gst_video_format_to_string (format);
+
+    GST_INFO_OBJECT (decoder, "pre_format %s cur format %s", pre_format, cur_format);
+
+    updatecaps = gst_caps_copy_nth (prevcaps, 0);
+
+    gst_caps_set_simple (updatecaps, "format", G_TYPE_STRING, cur_format, NULL);
+
+    if ((crop_width != disp_width) || (crop_height != disp_height)) {
+      res_changed = TRUE;
+      gst_caps_set_simple (updatecaps, "display_width", G_TYPE_INT, crop_width, NULL);
+      gst_caps_set_simple (updatecaps, "display_height", G_TYPE_INT, crop_height, NULL);
+    }
+
+    if ((pre_width != width) || (pre_height != height)) {
+      res_changed = TRUE;
+      gst_caps_set_simple (updatecaps, "width", G_TYPE_INT, width, NULL);
+      gst_caps_set_simple (updatecaps, "height", G_TYPE_INT, height, NULL);
+    }
+
+    if (res_changed == TRUE) {
+      GstVideoCodecState *state = NULL;
+      GstCaps *after_caps = NULL;
+      state = gst_video_decoder_get_output_state(decoder);
+      state->caps = updatecaps;
+      state->allocation_caps = updatecaps;
+      GST_DEBUG_OBJECT (decoder, "update caps: %" GST_PTR_FORMAT, updatecaps);
+      ret = gst_pad_set_caps (decoder->srcpad, updatecaps);
+      if (ret == FALSE){
+        GST_INFO_OBJECT (decoder, "gst_pad_set_caps FAILED");
+      }
+
+      after_caps = gst_pad_get_current_caps (decoder->srcpad);
+      if(after_caps)
+      {
+        GST_DEBUG_OBJECT (decoder, "after update caps, srcpad caps: %" GST_PTR_FORMAT, after_caps);
+        gst_caps_unref (after_caps);
+      }
+
+    }
+
+    if (prevcaps)
+      gst_caps_unref (prevcaps);
+    if (updatecaps)
+      gst_caps_unref (updatecaps);
+  }
+  return;
+}
+
+static void
 gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
 {
   GstV4l2VideoDec *self = GST_V4L2_VIDEO_DEC (decoder);
@@ -536,6 +666,9 @@ gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
   GstVideoCodecFrame *frame;
   GstBuffer *buffer = NULL;
   GstFlowReturn ret;
+  struct pollfd pfd;
+  gshort wait_event = V4L2_TYPE_IS_OUTPUT(self->v4l2capture->type) ? POLLOUT : POLLIN;
+  gint v4l2_ret = 0;
 
   GST_LOG_OBJECT (decoder, "Allocate output buffer");
 
@@ -545,6 +678,95 @@ gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
      * stream lock. we know that the acquire may need to poll until more frames
      * comes in and holding this lock would prevent that.
      */
+    v4l2_ret = gst_v4l2_object_poll (self->v4l2capture, 0);
+
+    GST_DEBUG_OBJECT (decoder, "v4l2 object poll ret: %d", v4l2_ret);
+
+    if (v4l2_ret == GST_V4L2_RET_EOS) {
+      GST_DEBUG_OBJECT (decoder, "got eos event");
+    }
+
+    if (v4l2_ret == GST_V4L2_RET_SRC_NOT_SUPPORT) {
+      goto src_not_support;
+    }
+
+    if (v4l2_ret == GST_V4L2_RET_RES_CHANGE) {
+      self->res_changed_state = TRUE;
+    }
+
+    if (self->res_changed_state == TRUE) {
+      if ( gst_v4l2_video_dec_check_empty_buffer(self->v4l2capture, 0) == GST_V4L2_RET_NO_FREE_BUF ) {
+        GST_DEBUG_OBJECT (decoder, "enter resolution change flow");
+        GstVideoInfo info;
+        guint crop_width = 0;
+        guint crop_height = 0;
+
+        gst_v4l2_buffer_pool_streamoff_res_change(self->v4l2capture->pool);//only after stream off, gst can get new resolution from drv
+
+        if (!gst_v4l2_object_acquire_format (self->v4l2capture, &info)) {
+          GST_INFO_OBJECT (decoder, "gst_v4l2_object_acquire_format failed");
+          goto beach;
+        }
+
+        if (TRUE == gst_v4l2_object_get_crop(self->v4l2capture, &crop_width, &crop_height)) {
+          gst_v4l2_update_caps(decoder, info.finfo->format, info.width, info.height, crop_width, crop_height);
+        }
+        else {
+          GST_WARNING_OBJECT (decoder, "gst_v4l2_object_get_crop failed");
+          goto beach;
+        }
+
+        if(GST_V4L2_IS_ACTIVE (self->v4l2capture)) {
+          if (!gst_v4l2_object_stop (self->v4l2capture)) {
+            GST_WARNING_OBJECT (decoder, "stop v4l2capture object failed");
+            goto beach;
+          }
+        }
+
+        GST_DEBUG_OBJECT (decoder, "enter negotiate");
+
+        if (!gst_video_decoder_negotiate (decoder)) {
+            GST_ERROR_OBJECT (decoder, "negotiate failed");
+            goto beach;
+        }
+
+        /* ensure pool is active, usually will not excute */
+        if (!gst_buffer_pool_is_active (GST_BUFFER_POOL (self->v4l2capture->pool))) {
+          if (!gst_buffer_pool_set_active (GST_BUFFER_POOL (self->v4l2capture->pool),TRUE))
+          {
+             GST_ERROR_OBJECT (decoder, "Buffer pool activation failed");
+             goto beach;
+          }
+        }
+
+        if (self->received_flushing_event) {
+          GST_DEBUG_OBJECT (decoder, "set new pool into flushing");
+          gst_buffer_pool_set_flushing (self->v4l2capture->pool, TRUE);
+          self->received_flushing_event = FALSE;
+        }
+
+        self->res_changed_state = FALSE;
+      }
+      else {
+        GST_DEBUG_OBJECT (decoder, "has buffer");
+      }
+    }
+
+    {
+      GstV4l2BufferPool *cpool =
+          GST_V4L2_BUFFER_POOL (gst_v4l2_object_get_buffer_pool
+          (self->v4l2capture));
+      if ((GST_FLOW_OK == gst_v4l2_buffer_pool_poll_event (cpool, TRUE))) {
+        if (gst_poll_fd_has_pri (cpool->poll, &cpool->pollfd)) {
+          GST_DEBUG_OBJECT (decoder, "has pri event");
+          continue;
+        }
+      } else {
+        GST_DEBUG_OBJECT (decoder, "has error");
+      }
+    }
+    GST_DEBUG_OBJECT (decoder, "pool event, ret: %d", ret);
+
     pool = gst_video_decoder_get_buffer_pool (decoder);
 
     /* Pool may be NULL if we started going to READY state */
@@ -615,6 +837,18 @@ gst_v4l2_video_dec_loop (GstVideoDecoder * decoder)
   }
 
   return;
+
+src_not_support:
+  {
+    GST_ERROR_OBJECT (decoder,
+        "Vdec not support the source, post error message to pipeline to stop playing it");
+    GError *gerror = g_error_new_literal (G_FILE_ERROR,
+        G_FILE_ERROR_NOENT, "Vdec not support the source");
+    gchar *sent_debug = g_strdup_printf ("%s(%d): %s ()",__FILE__, __LINE__, __FUNCTION__);
+
+    gst_element_post_message (&decoder->element,
+        gst_message_new_error(GST_OBJECT_CAST (decoder), gerror, sent_debug));
+  }
 
 beach:
   GST_DEBUG_OBJECT (decoder, "Leaving output thread: %s",
@@ -738,8 +972,12 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
     }
 
     GST_VIDEO_DECODER_STREAM_UNLOCK (decoder);
+
     GST_LOG_OBJECT (decoder, "Passing buffer with system frame number %u",
         processed ? frame->system_frame_number : 0);
+
+    if (gst_v4l2_object_sub_event (self->v4l2output) < 0)
+      goto register_sub_event_failed;
     ret =
         gst_v4l2_buffer_pool_process (GST_V4L2_BUFFER_POOL (pool), &codec_data,
         processed ? &frame->system_frame_number : &dummy_frame_number);
@@ -750,6 +988,9 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
     /* init capture fps according to output */
     self->v4l2capture->info.fps_d = self->v4l2output->info.fps_d;
     self->v4l2capture->info.fps_n = self->v4l2output->info.fps_n;
+
+    if (gst_v4l2_object_poll (self->v4l2output, 0) == GST_V4L2_RET_SRC_NOT_SUPPORT)
+      goto src_not_support;
 
     /* For decoders G_FMT returns coded size, G_SELECTION returns visible size
      * in the compose rectangle. gst_v4l2_object_acquire_format() checks both
@@ -767,7 +1008,7 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
     GST_DEBUG_OBJECT (self, "Acquired caps: %" GST_PTR_FORMAT, acquired_caps);
     st = gst_caps_get_structure (acquired_caps, 0);
     gst_structure_remove_fields (st, "format", "colorimetry", "chroma-site",
-        NULL);
+      NULL);
 
     /* Probe currently available pixel formats */
     available_caps = gst_caps_copy (self->probed_srccaps);
@@ -846,6 +1087,8 @@ gst_v4l2_video_dec_handle_frame (GstVideoDecoder * decoder,
     /* Start the processing task, when it quits, the task will disable input
      * processing to unlock input if draining, or prevent potential block */
     self->output_flow = GST_FLOW_FLUSHING;
+    if (gst_v4l2_object_sub_event (self->v4l2capture) < 0)
+      goto register_sub_event_failed;
     if (!gst_pad_start_task (decoder->srcpad,
             (GstTaskFunction) gst_v4l2_video_dec_loop, self, NULL))
       goto start_task_failed;
@@ -920,6 +1163,21 @@ process_failed:
     ret = GST_FLOW_ERROR;
     goto drop;
   }
+
+src_not_support:
+  {
+    GST_ERROR_OBJECT (self, "Vdec not support the source");
+    ret = GST_FLOW_ERROR;
+    goto drop;
+  }
+
+register_sub_event_failed:
+  {
+    GST_ERROR_OBJECT (self, "register sub event to driver failed");
+    ret = GST_FLOW_ERROR;
+    goto drop;
+  }
+
 drop:
   {
     if (pool)
@@ -1020,7 +1278,38 @@ gst_v4l2_video_dec_sink_event (GstVideoDecoder * decoder, GstEvent * event)
       GST_DEBUG_OBJECT (self, "flush start");
       gst_v4l2_object_unlock (self->v4l2output);
       gst_v4l2_object_unlock (self->v4l2capture);
+      self->received_flushing_event = TRUE;
       break;
+#if 1
+      /*
+      MTK add, we need support two flow, and these two feature are conflict in h264parse,
+      1) decoder resolution changed
+      that need h264parse do not send caps when resolution change(MTK h264parse flow from AUTO)
+      decoder plugin will get new resolution from dec drv, not from parser.
+
+      2) encoder resolution changed
+      that need h264parse send caps when resolution changed(this is flow from OSS)
+
+      so, we revert AUTO CL, let h264parse as same with OSS, but we do not received caps event when resolution changed
+      so, i add these code
+      */
+          case GST_EVENT_CAPS:
+          {
+            GstCaps *caps;
+
+            gst_event_parse_caps (event, &caps);
+            GST_DEBUG_OBJECT (self, "caps: %" GST_PTR_FORMAT, caps);
+
+            if (self->received_caps_event == TRUE) {
+              gst_event_unref (event);
+              event = NULL;
+              return TRUE;
+            }
+
+            self->received_caps_event = TRUE;
+            break;
+          }
+#endif
     default:
       break;
   }
@@ -1032,6 +1321,10 @@ gst_v4l2_video_dec_sink_event (GstVideoDecoder * decoder, GstEvent * event)
       /* The processing thread should stop now, wait for it */
       gst_pad_stop_task (decoder->srcpad);
       GST_DEBUG_OBJECT (self, "flush start done");
+      break;
+    case GST_EVENT_FLUSH_STOP:
+      self->received_flushing_event = FALSE;
+      GST_DEBUG_OBJECT (self, "flush stop done");
       break;
     default:
       break;
@@ -1093,6 +1386,10 @@ gst_v4l2_video_dec_subinstance_init (GTypeInstance * instance, gpointer g_class)
   GstVideoDecoder *decoder = GST_VIDEO_DECODER (instance);
 
   gst_video_decoder_set_packetized (decoder, TRUE);
+
+  self->res_changed_state = FALSE;
+  self->received_caps_event = FALSE;
+  self->received_flushing_event = FALSE;
 
   self->v4l2output = gst_v4l2_object_new (GST_ELEMENT (self),
       GST_OBJECT (GST_VIDEO_DECODER_SINK_PAD (self)),

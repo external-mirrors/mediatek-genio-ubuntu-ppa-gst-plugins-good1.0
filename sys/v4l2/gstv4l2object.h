@@ -72,6 +72,17 @@ typedef gboolean  (*GstV4l2GetInOutFunction)  (GstV4l2Object * v4l2object, guint
 typedef gboolean  (*GstV4l2SetInOutFunction)  (GstV4l2Object * v4l2object, guint32 input);
 typedef gboolean  (*GstV4l2UpdateFpsFunction) (GstV4l2Object * v4l2object);
 
+
+enum gst_V4L2_ret_type {
+  GST_V4L2_RET_OK = 0,
+  GST_V4L2_RET_FAIL = -1,
+  GST_V4L2_RET_NO_FILE = -2,
+  GST_V4L2_RET_NO_FREE_BUF = -3,
+  GST_V4L2_RET_EOS = -4,
+  GST_V4L2_RET_RES_CHANGE = -5,
+  GST_V4L2_RET_SRC_NOT_SUPPORT = -6,
+};
+
 /* On Android NDK r18b the ioctl() signature uses 'unsigned' instead of
  * 'unsigned long' for the 2nd parameter */
 #ifdef __ANDROID__
@@ -350,6 +361,11 @@ gboolean     gst_v4l2_set_controls    (GstV4l2Object * v4l2object, GstStructure 
 /* events */
 gboolean     gst_v4l2_subscribe_event (GstV4l2Object * v4l2object, guint32 event, guint32 id);
 gboolean     gst_v4l2_dequeue_event   (GstV4l2Object * v4l2object, struct v4l2_event *event);
+
+gboolean      gst_v4l2_object_get_crop (GstV4l2Object * obj, guint *crop_width, guint *crop_height);
+gint gst_v4l2_object_sub_event (GstV4l2Object * v4l2object);
+gint gst_v4l2_object_check_res_change (GstV4l2Object * v4l2object);
+gint gst_v4l2_object_poll (GstV4l2Object * v4l2object, gint timeout);
 
 G_END_DECLS
 

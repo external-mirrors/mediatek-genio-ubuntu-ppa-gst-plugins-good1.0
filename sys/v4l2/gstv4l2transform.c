@@ -248,6 +248,11 @@ outcaps_failed:
     gst_v4l2_error (self, &error);
     goto failed;
   }
+stop_failed:
+  {
+    GST_ERROR_OBJECT (self, "failed to stop streaming");
+    goto failed;
+  }
 failed:
   return FALSE;
 }

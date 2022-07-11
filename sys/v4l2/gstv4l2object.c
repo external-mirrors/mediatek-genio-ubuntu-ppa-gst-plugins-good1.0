@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <unistd.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
@@ -38,6 +39,12 @@
 #include "gstv4l2object.h"
 #include "gstv4l2tuner.h"
 #include "gstv4l2colorbalance.h"
+
+#include "gstv4l2src.h"
+#include "gstv4l2videoenc.h"
+#include "gstv4l2transform.h"
+#include <sys/poll.h>
+#include <poll.h>
 
 #include "gst/gst-i18n-plugin.h"
 
@@ -4238,12 +4245,15 @@ gst_v4l2_object_acquire_format (GstV4l2Object * v4l2object, GstVideoInfo * info)
   sel.target = V4L2_SEL_TGT_COMPOSE_DEFAULT;
   if (v4l2object->ioctl (v4l2object->video_fd, VIDIOC_G_SELECTION, &sel) >= 0) {
     r = &sel.r;
+    GST_DEBUG_OBJECT (v4l2object->dbg_obj, "get selection from here");
   } else {
     /* For ancient kernels, fall back to G_CROP */
     memset (&crop, 0, sizeof (struct v4l2_crop));
     crop.type = v4l2object->type;
     if (v4l2object->ioctl (v4l2object->video_fd, VIDIOC_G_CROP, &crop) >= 0)
       r = &crop.c;
+
+    GST_DEBUG_OBJECT (v4l2object->dbg_obj, "get crop from here");
   }
   if (r) {
     align.padding_left = r->left;
@@ -4252,6 +4262,8 @@ gst_v4l2_object_acquire_format (GstV4l2Object * v4l2object, GstVideoInfo * info)
     align.padding_bottom = height - r->height - r->top;
     width = r->width;
     height = r->height;
+
+    GST_DEBUG_OBJECT (v4l2object->dbg_obj, "update widht: %d height: %d", width, height);
   }
 
   switch (fmt.fmt.pix.field) {
@@ -4321,6 +4333,110 @@ unsupported_format:
     return FALSE;
   }
 }
+
+gboolean
+gst_v4l2_object_get_crop (GstV4l2Object * obj, guint *crop_width, guint *crop_height)
+{
+  struct v4l2_crop crop = { 0 };
+
+  if ((crop_width == NULL) || (crop_height == NULL))
+    return FALSE;
+
+  crop.type = obj->type;
+
+  if (ioctl (obj->video_fd, VIDIOC_G_CROP, &crop) < 0) {
+    GST_WARNING_OBJECT (obj->element, "VIDIOC_G_CROP failed");
+    return FALSE;
+  }
+  *crop_width = crop.c.width;
+  *crop_height = crop.c.height;
+
+  GST_INFO_OBJECT (obj->element,
+      "Got cropping left %u, top %u, size %ux%u", crop.c.left, crop.c.top,
+      crop.c.width, crop.c.height);
+
+  return TRUE;
+}
+
+gint
+gst_v4l2_object_sub_event (GstV4l2Object * v4l2object)
+{
+  gint r;
+  struct v4l2_event_subscription sub = { 0 };
+
+  sub.type = V4L2_EVENT_SOURCE_CHANGE;
+  r = ioctl (v4l2object->video_fd, VIDIOC_SUBSCRIBE_EVENT, &sub);
+
+  sub.type = V4L2_EVENT_EOS;
+  r = ioctl (v4l2object->video_fd, VIDIOC_SUBSCRIBE_EVENT, &sub);
+
+  return r;
+}
+
+gint
+gst_v4l2_object_check_res_change (GstV4l2Object * v4l2object)
+{
+  struct v4l2_event e = { 0 };
+  __u32 change;
+
+  ioctl (v4l2object->video_fd, VIDIOC_DQEVENT, &e);
+  GST_LOG ("e.type=%d",e.type);
+
+  switch (e.type) {
+    case V4L2_EVENT_SOURCE_CHANGE:
+    {
+      change = e.u.src_change.changes;
+      if (change & V4L2_EVENT_SRC_CH_RESOLUTION) {
+        GST_LOG ("Got resolution change,change=%d", change);
+        return GST_V4L2_RET_RES_CHANGE;
+       }
+    }
+    case V4L2_EVENT_EOS:
+    {
+      GST_LOG ("Got Eos Event From Driver");
+      return GST_V4L2_RET_EOS;
+    }
+    default :
+      goto err;
+  }
+  return GST_V4L2_RET_OK;
+err:
+  GST_LOG ("Got unknonw event");
+  return GST_V4L2_RET_FAIL;
+}
+
+gint
+gst_v4l2_object_poll (GstV4l2Object * v4l2object, gint timeout)
+{
+  struct pollfd pfd;
+  gshort wait_event = V4L2_TYPE_IS_OUTPUT (v4l2object->type) ? POLLOUT : POLLIN;
+  gint ret = 0;
+  pfd.fd = v4l2object->video_fd;
+  pfd.events = POLLERR;
+  pfd.events |= wait_event;
+  pfd.events |= POLLPRI;
+
+  GST_LOG ("before poll");
+  ret = poll (&pfd, 1, timeout);
+  GST_LOG ("after poll, pfd.revents=%d", pfd.revents);
+
+  if (ret == -1) {
+    GST_LOG ("poll fail");
+    return GST_V4L2_RET_FAIL;
+  }
+
+  if (pfd.revents & POLLERR)
+    return GST_V4L2_RET_FAIL;
+
+  if (pfd.revents & POLLPRI) {
+    ret = gst_v4l2_object_check_res_change (v4l2object);
+    return ret;
+  }
+
+  if ((pfd.revents & wait_event) == wait_event)
+    return GST_V4L2_RET_OK;
+}
+
 
 /**
  * gst_v4l2_object_set_crop:
