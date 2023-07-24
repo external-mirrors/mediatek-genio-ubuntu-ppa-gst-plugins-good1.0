@@ -2,3 +2,14 @@ Skip-failing-tests.patch
 import-camerabin
 import-jpegformat
 add-pkgconfig-file
+0005-qt-include-ext-qt-gstqtgl.h-instead-of-gst-gl-gstglf.patch
+0006-Port-plugins-to-gst_video_format_info_extrapolate_st.patch
+0007-video4linux2-Add-MM21-support.patch
+0008-doc-Add-NV12_16L32S-into-the-cache.patch
+0009-v4l2videoenc-set-caps-with-prepend-header-flag.patch
+0010-v4l2object-add-mjpeg-decode-ym16-support.patch
+0011-v4l2-bypass-check-some-transfer-types-in-colorimetry.patch
+0012-v4l2object-Adjust-ENCODED_BUFFER_SIZE-for-4K-video.patch
+0013-Support-dynamic-resolution-change.patch
+0014-v4l2object-add-colorimetry-extensions-for-better-com.patch
+0015-v4l2-Fix-SIGSEGV-on-change-state-during-format-chang.patch

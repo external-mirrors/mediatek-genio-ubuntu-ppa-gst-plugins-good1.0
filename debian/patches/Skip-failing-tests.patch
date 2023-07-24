@@ -12,7 +12,7 @@ https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/1221
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/tests/check/meson.build b/tests/check/meson.build
-index 1920768..e7407f8 100644
+index 1920768..fcf095b 100644
 --- a/tests/check/meson.build
 +++ b/tests/check/meson.build
 @@ -67,7 +67,7 @@ good_tests = [

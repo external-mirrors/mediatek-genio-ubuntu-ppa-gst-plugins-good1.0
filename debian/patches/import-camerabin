@@ -8407,7 +8407,7 @@ index cbc28ca..05b0b06 100644
                    'goom2k1', 'icydemux', 'id3demux', 'imagefreeze',
                    'interleave', 'isomp4', 'law', 'level', 'matroska',
 diff --git a/meson.build b/meson.build
-index 517bde4..4d4092f 100644
+index 21d4015..438827f 100644
 --- a/meson.build
 +++ b/meson.build
 @@ -29,6 +29,12 @@ else
@@ -8471,7 +8471,7 @@ index 517bde4..4d4092f 100644
  # Mandatory GST deps
  gst_dep = dependency('gstreamer-1.0', version : gst_req,
    fallback : ['gstreamer', 'gst_dep'])
-@@ -439,6 +464,10 @@ else
+@@ -433,6 +458,10 @@ else
    message('GStreamer debug system is enabled')
  endif
  
@@ -8482,7 +8482,7 @@ index 517bde4..4d4092f 100644
  presetdir = join_paths(get_option('datadir'), 'gstreamer-' + api_version, 'presets')
  
  python3 = import('python').find_installation()
-@@ -449,6 +478,16 @@ if get_option('default_library') == 'shared'
+@@ -443,6 +472,16 @@ if get_option('default_library') == 'shared'
    plugins_pkgconfig_install_dir = disabler()
  endif
  
@@ -10520,7 +10520,7 @@ index 0000000..664e710
 +
 +GST_CHECK_MAIN (camerabin);
 diff --git a/tests/check/meson.build b/tests/check/meson.build
-index 1920768..4a3f152 100644
+index fcf095b..e36af5c 100644
 --- a/tests/check/meson.build
 +++ b/tests/check/meson.build
 @@ -30,6 +30,7 @@ good_tests = [
