@@ -1,3 +1,9 @@
+gst-plugins-good1.0 (1.20.3-0genio4) jammy; urgency=medium
+
+  * Disable failing elements_camerabin test.
+
+ -- Pablo Sun <pablo.sun@mediatek.com>  Tue, 25 Jul 2023 09:51:14 +0800
+
 gst-plugins-good1.0 (1.20.3-0genio3) jammy; urgency=medium
 
   * Import MM21 and colorimetry patches from IoT Yocto 23.1
