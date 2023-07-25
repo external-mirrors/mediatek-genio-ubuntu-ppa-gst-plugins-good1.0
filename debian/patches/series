@@ -13,3 +13,4 @@ add-pkgconfig-file
 0013-Support-dynamic-resolution-change.patch
 0014-v4l2object-add-colorimetry-extensions-for-better-com.patch
 0015-v4l2-Fix-SIGSEGV-on-change-state-during-format-chang.patch
+0016-genio-Remove-failing-test-elements_camerabin.patch

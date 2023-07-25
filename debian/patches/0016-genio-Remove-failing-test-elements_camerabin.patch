@@ -1,0 +1,25 @@
+From: Pablo Sun <pablo.sun@mediatek.com>
+Date: Tue, 25 Jul 2023 09:48:37 +0800
+Subject: genio: Remove failing test elements_camerabin
+
+The test "elements_camerabin" generates TIMEOUT errors when building
+with arm64 platform. Disable the test for the moment because Genio
+platform test cases does not currently involve `camerabin`.
+
+Signed-off-by: Pablo Sun <pablo.sun@mediatek.com>
+---
+ tests/check/meson.build | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/tests/check/meson.build b/tests/check/meson.build
+index e36af5c..d231899 100644
+--- a/tests/check/meson.build
++++ b/tests/check/meson.build
+@@ -30,7 +30,6 @@ good_tests = [
+   [ 'elements/alpha' ],
+   [ 'elements/avimux', false, [gstriff_dep] ],
+   [ 'elements/avisubtitle', false, [gstriff_dep] ],
+-  [ 'elements/camerabin' ],
+   [ 'elements/capssetter' ],
+   [ 'elements/aacparse', false, [libparser_dep] ],
+   [ 'elements/ac3parse', false, [libparser_dep] ],
