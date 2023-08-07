@@ -2,6 +2,7 @@ Skip-failing-tests.patch
 import-camerabin
 import-jpegformat
 add-pkgconfig-file
+CVE-2023-37327-1.patch
 0005-qt-include-ext-qt-gstqtgl.h-instead-of-gst-gl-gstglf.patch
 0006-Port-plugins-to-gst_video_format_info_extrapolate_st.patch
 0007-video4linux2-Add-MM21-support.patch

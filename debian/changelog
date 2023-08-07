@@ -1,14 +1,20 @@
-gst-plugins-good1.0 (1.20.3-0genio4) jammy; urgency=medium
+gst-plugins-good1.0 (1.20.3-0ubuntu1.1genio1) jammy; urgency=medium
 
   * Disable failing elements_camerabin test.
-
- -- Pablo Sun <pablo.sun@mediatek.com>  Tue, 25 Jul 2023 09:51:14 +0800
-
-gst-plugins-good1.0 (1.20.3-0genio3) jammy; urgency=medium
-
   * Import MM21 and colorimetry patches from IoT Yocto 23.1
 
- -- Pablo Sun <pablo.sun@mediatek.com>  Fri, 21 Jul 2023 11:52:29 +0800
+ -- Pablo Sun <pablo.sun@mediatek.com>  Mon, 07 Aug 2023 14:10:31 +0800
+
+gst-plugins-good1.0 (1.20.3-0ubuntu1.1) jammy-security; urgency=medium
+
+  * SECURITY UPDATE: Integer overflow leading to heap overwrite in FLAC
+    image tag handling
+    - debian/patches/CVE-2023-37327-1.patch: avoid integer overflow in
+      available data check for image tags in
+      gst/audioparsers/gstflacparse.c.
+    - CVE-2023-37327
+
+ -- Marc Deslauriers <marc.deslauriers@ubuntu.com>  Tue, 01 Aug 2023 08:51:15 -0400
 
 gst-plugins-good1.0 (1.20.3-0ubuntu1) jammy; urgency=medium
 
