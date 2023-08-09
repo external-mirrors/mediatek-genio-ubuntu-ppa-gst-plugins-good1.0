@@ -1,7 +1,9 @@
-gst-plugins-good1.0 (1.20.3-0ubuntu1.1genio1) jammy; urgency=medium
+gst-plugins-good1.0 (1.20.3+genio23.1~pr1-0genio1) jammy; urgency=medium
 
+  * Import MM21 and colorimetry patches from IoT Yocto 23.1 PR1 pre-release
   * Disable failing elements_camerabin test.
-  * Import MM21 and colorimetry patches from IoT Yocto 23.1
+  * Set package build dependency to 1.20.3+genio23 since we've introduced
+    new interfaces and headers.
 
  -- Pablo Sun <pablo.sun@mediatek.com>  Mon, 07 Aug 2023 14:10:31 +0800
 
