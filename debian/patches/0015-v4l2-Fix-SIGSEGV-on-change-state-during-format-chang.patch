@@ -1,26 +1,28 @@
+From 26b8c937822e38e8f91bff3ff9afbbc9d0457030 Mon Sep 17 00:00:00 2001
 From: Pawel Stawicki <stawel+gstreamer@gmail.com>
 Date: Mon, 28 Nov 2022 22:26:50 +0000
-Subject: v4l2: Fix SIGSEGV on 'change state' during 'format change'
+Subject: [PATCH 1/2] v4l2: Fix SIGSEGV on 'change state' during 'format
+ change'
 
 Ensure all access to v4l2object->pool imply taking a lock and a hard ref on the pool
 
 Part-of: <https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/3481>
 ---
- sys/v4l2/gstv4l2bufferpool.c |  40 ++++++++----
+ sys/v4l2/gstv4l2bufferpool.c |  40 +++++++---
  sys/v4l2/gstv4l2bufferpool.h |   4 +-
- sys/v4l2/gstv4l2object.c     | 148 +++++++++++++++++++++++++++++++------------
+ sys/v4l2/gstv4l2object.c     | 148 ++++++++++++++++++++++++++---------
  sys/v4l2/gstv4l2object.h     |   2 +
  sys/v4l2/gstv4l2sink.c       |  10 ++-
- sys/v4l2/gstv4l2src.c        |  42 +++++++++---
- sys/v4l2/gstv4l2transform.c  |  22 ++++---
- sys/v4l2/gstv4l2videoenc.c   |  52 +++++++++++----
- 8 files changed, 235 insertions(+), 85 deletions(-)
+ sys/v4l2/gstv4l2src.c        |  47 ++++++++---
+ sys/v4l2/gstv4l2transform.c  |  22 ++++--
+ sys/v4l2/gstv4l2videoenc.c   |  52 +++++++++---
+ 8 files changed, 240 insertions(+), 85 deletions(-)
 
 diff --git a/sys/v4l2/gstv4l2bufferpool.c b/sys/v4l2/gstv4l2bufferpool.c
-index 7ffdc6f..6d72c95 100644
+index 18fb61b..29f2a28 100644
 --- a/sys/v4l2/gstv4l2bufferpool.c
 +++ b/sys/v4l2/gstv4l2bufferpool.c
-@@ -1023,21 +1023,25 @@ gst_v4l2_buffer_pool_stop (GstBufferPool * bpool)
+@@ -1018,21 +1018,25 @@ gst_v4l2_buffer_pool_stop (GstBufferPool * bpool)
  }
  
  gboolean
@@ -53,7 +55,7 @@ index 7ffdc6f..6d72c95 100644
  
    /* We lock to prevent racing with a return buffer in QBuf, and has a
     * workaround of not being able to use the pool hidden activation lock. */
-@@ -1051,10 +1055,17 @@ gst_v4l2_buffer_pool_orphan (GstBufferPool ** bpool)
+@@ -1046,10 +1050,17 @@ gst_v4l2_buffer_pool_orphan (GstBufferPool ** bpool)
    GST_OBJECT_UNLOCK (pool);
  
    if (ret) {
@@ -73,7 +75,7 @@ index 7ffdc6f..6d72c95 100644
    return ret;
  }
  
-@@ -2299,16 +2310,23 @@ gst_v4l2_buffer_pool_copy_at_threshold (GstV4l2BufferPool * pool, gboolean copy)
+@@ -2278,16 +2289,23 @@ gst_v4l2_buffer_pool_copy_at_threshold (GstV4l2BufferPool * pool, gboolean copy)
  }
  
  gboolean
@@ -116,10 +118,10 @@ index 1074263..60340c2 100644
  void                gst_v4l2_buffer_pool_enable_resolution_change (GstV4l2BufferPool *self);
  
 diff --git a/sys/v4l2/gstv4l2object.c b/sys/v4l2/gstv4l2object.c
-index 2eec139..748384a 100644
+index 7de0f1c..4f9f302 100644
 --- a/sys/v4l2/gstv4l2object.c
 +++ b/sys/v4l2/gstv4l2object.c
-@@ -3274,8 +3274,14 @@ gst_v4l2_object_setup_pool (GstV4l2Object * v4l2object, GstCaps * caps)
+@@ -3267,8 +3267,14 @@ gst_v4l2_object_setup_pool (GstV4l2Object * v4l2object, GstCaps * caps)
    /* Map the buffers */
    GST_LOG_OBJECT (v4l2object->dbg_obj, "initiating buffer pool");
  
@@ -136,7 +138,7 @@ index 2eec139..748384a 100644
  
    GST_V4L2_SET_ACTIVE (v4l2object);
  
-@@ -4640,17 +4646,19 @@ gst_v4l2_object_caps_equal (GstV4l2Object * v4l2object, GstCaps * caps)
+@@ -4524,17 +4530,19 @@ gst_v4l2_object_caps_equal (GstV4l2Object * v4l2object, GstCaps * caps)
    GstStructure *config;
    GstCaps *oldcaps;
    gboolean ret;
@@ -158,7 +160,7 @@ index 2eec139..748384a 100644
    return ret;
  }
  
-@@ -4660,17 +4668,19 @@ gst_v4l2_object_caps_is_subset (GstV4l2Object * v4l2object, GstCaps * caps)
+@@ -4544,17 +4552,19 @@ gst_v4l2_object_caps_is_subset (GstV4l2Object * v4l2object, GstCaps * caps)
    GstStructure *config;
    GstCaps *oldcaps;
    gboolean ret;
@@ -180,7 +182,7 @@ index 2eec139..748384a 100644
    return ret;
  }
  
-@@ -4679,11 +4689,12 @@ gst_v4l2_object_get_current_caps (GstV4l2Object * v4l2object)
+@@ -4563,11 +4573,12 @@ gst_v4l2_object_get_current_caps (GstV4l2Object * v4l2object)
  {
    GstStructure *config;
    GstCaps *oldcaps;
@@ -195,7 +197,7 @@ index 2eec139..748384a 100644
    gst_buffer_pool_config_get_params (config, &oldcaps, NULL, NULL, NULL);
  
    if (oldcaps)
-@@ -4691,6 +4702,7 @@ gst_v4l2_object_get_current_caps (GstV4l2Object * v4l2object)
+@@ -4575,6 +4586,7 @@ gst_v4l2_object_get_current_caps (GstV4l2Object * v4l2object)
  
    gst_structure_free (config);
  
@@ -203,7 +205,7 @@ index 2eec139..748384a 100644
    return oldcaps;
  }
  
-@@ -4698,12 +4710,17 @@ gboolean
+@@ -4582,12 +4594,17 @@ gboolean
  gst_v4l2_object_unlock (GstV4l2Object * v4l2object)
  {
    gboolean ret = TRUE;
@@ -223,7 +225,7 @@ index 2eec139..748384a 100644
    return ret;
  }
  
-@@ -4711,18 +4728,24 @@ gboolean
+@@ -4595,18 +4612,24 @@ gboolean
  gst_v4l2_object_unlock_stop (GstV4l2Object * v4l2object)
  {
    gboolean ret = TRUE;
@@ -250,7 +252,7 @@ index 2eec139..748384a 100644
    GST_DEBUG_OBJECT (v4l2object->dbg_obj, "stopping");
  
    if (!GST_V4L2_IS_OPEN (v4l2object))
-@@ -4730,13 +4753,23 @@ gst_v4l2_object_stop (GstV4l2Object * v4l2object)
+@@ -4614,13 +4637,23 @@ gst_v4l2_object_stop (GstV4l2Object * v4l2object)
    if (!GST_V4L2_IS_ACTIVE (v4l2object))
      goto done;
  
@@ -279,7 +281,7 @@ index 2eec139..748384a 100644
    }
  
    GST_V4L2_SET_INACTIVE (v4l2object);
-@@ -5083,7 +5116,7 @@ gboolean
+@@ -4967,7 +5000,7 @@ gboolean
  gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
  {
    GstCaps *caps;
@@ -288,7 +290,7 @@ index 2eec139..748384a 100644
    GstStructure *config;
    guint size, min, max, own_min = 0;
    gboolean update;
-@@ -5100,9 +5133,13 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
+@@ -4984,9 +5017,13 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
  
    gst_query_parse_allocation (query, &caps, NULL);
  
@@ -303,7 +305,7 @@ index 2eec139..748384a 100644
    }
  
    if (gst_query_get_n_allocation_params (query) > 0)
-@@ -5156,7 +5193,7 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
+@@ -5040,7 +5077,7 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
          /* no downstream pool, use our own then */
          GST_DEBUG_OBJECT (obj->dbg_obj,
              "read/write mode: no downstream pool, using our own");
@@ -312,7 +314,7 @@ index 2eec139..748384a 100644
          size = obj->info.size;
          pushing_from_our_pool = TRUE;
        }
-@@ -5168,11 +5205,11 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
+@@ -5052,11 +5089,11 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
         * our own, so it can serve itself */
        if (pool == NULL)
          goto no_downstream_pool;
@@ -326,7 +328,7 @@ index 2eec139..748384a 100644
        size = obj->info.size;
        break;
  
-@@ -5183,7 +5220,7 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
+@@ -5067,7 +5104,7 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
        if (can_share_own_pool) {
          if (pool)
            gst_object_unref (pool);
@@ -335,7 +337,7 @@ index 2eec139..748384a 100644
          size = obj->info.size;
          GST_DEBUG_OBJECT (obj->dbg_obj,
              "streaming mode: using our own pool %" GST_PTR_FORMAT, pool);
-@@ -5241,7 +5278,7 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
+@@ -5125,7 +5162,7 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
      min = MAX (min, GST_V4L2_MIN_BUFFERS (obj));
  
      /* To import we need the other pool to hold at least own_min */
@@ -344,7 +346,7 @@ index 2eec139..748384a 100644
        min += own_min;
    }
  
-@@ -5250,7 +5287,7 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
+@@ -5134,7 +5171,7 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
      max = MAX (min, max);
  
    /* First step, configure our own pool */
@@ -353,7 +355,7 @@ index 2eec139..748384a 100644
  
    if (obj->need_video_meta || has_video_meta) {
      GST_DEBUG_OBJECT (obj->dbg_obj, "activate Video Meta");
-@@ -5265,19 +5302,19 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
+@@ -5149,19 +5186,19 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
        GST_PTR_FORMAT, config);
  
    /* Our pool often need to adjust the value */
@@ -377,7 +379,7 @@ index 2eec139..748384a 100644
      other_pool = pool;
  
    if (other_pool) {
-@@ -5328,6 +5365,9 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
+@@ -5212,6 +5249,9 @@ gst_v4l2_object_decide_allocation (GstV4l2Object * obj, GstQuery * query)
    if (pool)
      gst_object_unref (pool);
  
@@ -387,7 +389,7 @@ index 2eec139..748384a 100644
    return TRUE;
  
  pool_failed:
-@@ -5347,6 +5387,13 @@ no_size:
+@@ -5231,6 +5271,13 @@ no_size:
          (_("Video device did not suggest any buffer size.")), (NULL));
      goto cleanup;
    }
@@ -401,7 +403,7 @@ index 2eec139..748384a 100644
  cleanup:
    {
      if (allocator)
-@@ -5354,13 +5401,9 @@ cleanup:
+@@ -5238,13 +5285,9 @@ cleanup:
  
      if (pool)
        gst_object_unref (pool);
@@ -418,7 +420,7 @@ index 2eec139..748384a 100644
      return FALSE;
    }
  }
-@@ -5387,9 +5430,14 @@ gst_v4l2_object_propose_allocation (GstV4l2Object * obj, GstQuery * query)
+@@ -5271,9 +5314,14 @@ gst_v4l2_object_propose_allocation (GstV4l2Object * obj, GstQuery * query)
    switch (obj->mode) {
      case GST_V4L2_IO_MMAP:
      case GST_V4L2_IO_DMABUF:
@@ -436,7 +438,7 @@ index 2eec139..748384a 100644
        }
        break;
      default:
-@@ -5502,3 +5550,25 @@ gst_v4l2_object_try_import (GstV4l2Object * obj, GstBuffer * buffer)
+@@ -5386,3 +5434,25 @@ gst_v4l2_object_try_import (GstV4l2Object * obj, GstBuffer * buffer)
    /* for the remaining, only the kernel driver can tell */
    return TRUE;
  }
@@ -463,10 +465,10 @@ index 2eec139..748384a 100644
 +  return ret;
 +}
 diff --git a/sys/v4l2/gstv4l2object.h b/sys/v4l2/gstv4l2object.h
-index 30693a3..481b23f 100644
+index a1f0df1..de0722d 100644
 --- a/sys/v4l2/gstv4l2object.h
 +++ b/sys/v4l2/gstv4l2object.h
-@@ -321,6 +321,8 @@ gboolean     gst_v4l2_object_decide_allocation (GstV4l2Object * v4l2object, GstQ
+@@ -310,6 +310,8 @@ gboolean     gst_v4l2_object_decide_allocation (GstV4l2Object * v4l2object, GstQ
  
  gboolean     gst_v4l2_object_propose_allocation (GstV4l2Object * obj, GstQuery * query);
  
@@ -521,7 +523,7 @@ index cc601ac..7ad1a8c 100644
    }
  }
 diff --git a/sys/v4l2/gstv4l2src.c b/sys/v4l2/gstv4l2src.c
-index d00f7a8..4c82eba 100644
+index d00f7a8..f100407 100644
 --- a/sys/v4l2/gstv4l2src.c
 +++ b/sys/v4l2/gstv4l2src.c
 @@ -497,6 +497,7 @@ gst_v4l2src_query_preferred_dv_timings (GstV4l2Src * v4l2src,
@@ -548,7 +550,7 @@ index d00f7a8..4c82eba 100644
      gst_v4l2_set_dv_timings (obj, &dv_timings);
      /* Setting a new DV timings invalidates the probed caps. */
      gst_caps_replace (&obj->probed_caps, NULL);
-@@ -693,6 +701,7 @@ static gboolean
+@@ -693,17 +701,23 @@ static gboolean
  gst_v4l2src_decide_allocation (GstBaseSrc * bsrc, GstQuery * query)
  {
    GstV4l2Src *src = GST_V4L2SRC (bsrc);
@@ -556,16 +558,24 @@ index d00f7a8..4c82eba 100644
    gboolean ret = TRUE;
  
    if (src->pending_set_fmt) {
-@@ -703,7 +712,7 @@ gst_v4l2src_decide_allocation (GstBaseSrc * bsrc, GstQuery * query)
+     GstCaps *caps = gst_pad_get_current_caps (GST_BASE_SRC_PAD (bsrc));
+     GstV4l2Error error = GST_V4L2_ERROR_INIT;
+ 
++    /* Setting the format replaces the current pool */
++    gst_clear_object (&bpool);
++
+     caps = gst_caps_make_writable (caps);
  
      ret = gst_v4l2src_set_format (src, caps, &error);
      if (ret) {
 -      GstV4l2BufferPool *pool = GST_V4L2_BUFFER_POOL (src->v4l2object->pool);
-+      GstV4l2BufferPool *pool = GST_V4L2_BUFFER_POOL (bpool);
++      GstV4l2BufferPool *pool;
++      bpool = gst_v4l2_object_get_buffer_pool (src->v4l2object);
++      pool = GST_V4L2_BUFFER_POOL (bpool);
        gst_v4l2_buffer_pool_enable_resolution_change (pool);
      } else {
        gst_v4l2_error (src, &error);
-@@ -711,7 +720,7 @@ gst_v4l2src_decide_allocation (GstBaseSrc * bsrc, GstQuery * query)
+@@ -711,7 +725,7 @@ gst_v4l2src_decide_allocation (GstBaseSrc * bsrc, GstQuery * query)
  
      gst_caps_unref (caps);
      src->pending_set_fmt = FALSE;
@@ -574,7 +584,7 @@ index d00f7a8..4c82eba 100644
      /* Trick basesrc into not deactivating the active pool. Renegotiating here
       * would otherwise turn off and on the camera. */
      GstAllocator *allocator;
-@@ -737,6 +746,8 @@ gst_v4l2src_decide_allocation (GstBaseSrc * bsrc, GstQuery * query)
+@@ -737,6 +751,8 @@ gst_v4l2src_decide_allocation (GstBaseSrc * bsrc, GstQuery * query)
        gst_object_unref (pool);
      if (allocator)
        gst_object_unref (allocator);
@@ -583,7 +593,7 @@ index d00f7a8..4c82eba 100644
  
      return GST_BASE_SRC_CLASS (parent_class)->decide_allocation (bsrc, query);
    }
-@@ -748,10 +759,12 @@ gst_v4l2src_decide_allocation (GstBaseSrc * bsrc, GstQuery * query)
+@@ -748,10 +764,12 @@ gst_v4l2src_decide_allocation (GstBaseSrc * bsrc, GstQuery * query)
    }
  
    if (ret) {
@@ -597,7 +607,7 @@ index d00f7a8..4c82eba 100644
    return ret;
  
  activate_failed:
-@@ -759,6 +772,8 @@ activate_failed:
+@@ -759,6 +777,8 @@ activate_failed:
      GST_ELEMENT_ERROR (src, RESOURCE, SETTINGS,
          (_("Failed to allocate required memory.")),
          ("Buffer pool activation failed"));
@@ -606,7 +616,7 @@ index d00f7a8..4c82eba 100644
      return FALSE;
    }
  }
-@@ -803,8 +818,13 @@ gst_v4l2src_query (GstBaseSrc * bsrc, GstQuery * query)
+@@ -803,8 +823,13 @@ gst_v4l2src_query (GstBaseSrc * bsrc, GstQuery * query)
          min_latency /= 2;
  
        /* max latency is total duration of the frame buffer */
@@ -622,7 +632,7 @@ index d00f7a8..4c82eba 100644
  
        if (num_buffers == 0)
          max_latency = -1;
-@@ -937,8 +957,6 @@ gst_v4l2src_create (GstPushSrc * src, GstBuffer ** buf)
+@@ -937,8 +962,6 @@ gst_v4l2src_create (GstPushSrc * src, GstBuffer ** buf)
    gboolean half_frame;
  
    do {
@@ -631,7 +641,7 @@ index d00f7a8..4c82eba 100644
      ret = GST_BASE_SRC_CLASS (parent_class)->alloc (GST_BASE_SRC (src), 0,
          obj->info.size, buf);
  
-@@ -965,7 +983,13 @@ gst_v4l2src_create (GstPushSrc * src, GstBuffer ** buf)
+@@ -965,7 +988,13 @@ gst_v4l2src_create (GstPushSrc * src, GstBuffer ** buf)
        goto alloc_failed;
      }
  
@@ -647,10 +657,10 @@ index d00f7a8..4c82eba 100644
    } while (ret == GST_V4L2_FLOW_CORRUPTED_BUFFER ||
        ret == GST_V4L2_FLOW_RESOLUTION_CHANGE);
 diff --git a/sys/v4l2/gstv4l2transform.c b/sys/v4l2/gstv4l2transform.c
-index 82b692e..77b5ad0 100644
+index de7f39b..c80c028 100644
 --- a/sys/v4l2/gstv4l2transform.c
 +++ b/sys/v4l2/gstv4l2transform.c
-@@ -323,12 +323,16 @@ gst_v4l2_transform_decide_allocation (GstBaseTransform * trans,
+@@ -318,12 +318,16 @@ gst_v4l2_transform_decide_allocation (GstBaseTransform * trans,
    GST_DEBUG_OBJECT (self, "called");
  
    if (gst_v4l2_object_decide_allocation (self->v4l2capture, query)) {
@@ -669,7 +679,7 @@ index 82b692e..77b5ad0 100644
        goto activate_failed;
    }
  
-@@ -888,7 +892,7 @@ gst_v4l2_transform_prepare_output_buffer (GstBaseTransform * trans,
+@@ -883,7 +887,7 @@ gst_v4l2_transform_prepare_output_buffer (GstBaseTransform * trans,
      GstBuffer * inbuf, GstBuffer ** outbuf)
  {
    GstV4l2Transform *self = GST_V4L2_TRANSFORM (trans);
@@ -678,7 +688,7 @@ index 82b692e..77b5ad0 100644
    GstFlowReturn ret = GST_FLOW_OK;
    GstBaseTransformClass *bclass = GST_BASE_TRANSFORM_CLASS (parent_class);
  
-@@ -937,6 +941,8 @@ gst_v4l2_transform_prepare_output_buffer (GstBaseTransform * trans,
+@@ -932,6 +936,8 @@ gst_v4l2_transform_prepare_output_buffer (GstBaseTransform * trans,
      goto beach;
  
    do {
@@ -687,7 +697,7 @@ index 82b692e..77b5ad0 100644
      pool = gst_base_transform_get_buffer_pool (trans);
  
      if (!gst_buffer_pool_set_active (pool, TRUE))
-@@ -949,7 +955,7 @@ gst_v4l2_transform_prepare_output_buffer (GstBaseTransform * trans,
+@@ -944,7 +950,7 @@ gst_v4l2_transform_prepare_output_buffer (GstBaseTransform * trans,
      if (ret != GST_FLOW_OK)
        goto alloc_failed;
  
@@ -696,7 +706,7 @@ index 82b692e..77b5ad0 100644
      ret =
          gst_v4l2_buffer_pool_process (GST_V4L2_BUFFER_POOL (pool), outbuf,
          NULL);
-@@ -969,6 +975,8 @@ gst_v4l2_transform_prepare_output_buffer (GstBaseTransform * trans,
+@@ -964,6 +970,8 @@ gst_v4l2_transform_prepare_output_buffer (GstBaseTransform * trans,
      }
  
  beach:
@@ -705,7 +715,7 @@ index 82b692e..77b5ad0 100644
    return ret;
  
  activate_failed:
-@@ -1019,10 +1027,8 @@ gst_v4l2_transform_sink_event (GstBaseTransform * trans, GstEvent * event)
+@@ -1014,10 +1022,8 @@ gst_v4l2_transform_sink_event (GstBaseTransform * trans, GstEvent * event)
        GST_DEBUG_OBJECT (self, "flush stop");
        gst_v4l2_object_unlock_stop (self->v4l2capture);
        gst_v4l2_object_unlock_stop (self->v4l2output);
@@ -821,3 +831,6 @@ index d9f8725..049a5cd 100644
      GST_VIDEO_ENCODER_STREAM_LOCK (encoder);
  
      if (ret == GST_FLOW_FLUSHING) {
+-- 
+2.18.0
+
